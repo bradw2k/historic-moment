@@ -3,7 +3,7 @@ package main
 import (
     "fmt"
     "log"
-    "strconv"
+    //"strconv"
     "database/sql"
     _ "github.com/lib/pq"
 )
@@ -18,7 +18,7 @@ type columnStruct struct {
 }
 
 var historicMomentId int
-var tableNames map[string]bool
+var tableNames []string
 var newCount int
 var updatedCount int
 var deletedCount int
@@ -27,7 +27,7 @@ var workLog string
 
 
 func main() {
-    tableNames = make(map[string]bool)
+    tableNames = make([]string, 0, 100)
     db, err := sql.Open("postgres", "user=bradwilliams dbname=fbi_development sslmode=disable")
     if err != nil {
         log.Fatal(err)
@@ -53,7 +53,7 @@ func main() {
             log.Fatal(err)
         }
 
-        tableNames[tableName] = true
+        tableNames = append(tableNames, tableName)
     }
 
     err = rows.Err()
@@ -79,12 +79,28 @@ func main() {
         }
     }
 
-    _, err = db.Query("INSERT INTO historic_moments (context) VALUES ('standard') RETURNING id")
+    rows, err = db.Query("INSERT INTO historic_moments (context) VALUES ('standard') RETURNING id")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rows.Close()
+    rows.Next()
+    err = rows.Scan(&historicMomentId)
     if err != nil {
         log.Fatal(err)
     }
 
-    processTable(db, "plans")
+    log.Println(historicMomentId)
+
+
+
+    //processTable(db, "bmg_rk_masters")
+
+
+    for _, tableName := range tableNames {
+        log.Println(tableName)
+        processTable(db, tableName)
+    }
 }
 
 
@@ -94,6 +110,33 @@ func processTable(db *sql.DB, tableName string) {
 
 
 func createOrUpdateHistoricTable(db *sql.DB, tableName string) {
+    columns, primaryKeyColumns := getTableInfo(db, tableName)
+
+    historicTableName := tableName + "_historic"
+
+    if tableExists(db, historicTableName) {
+        log.Println("historic table already exists :-)")
+        //addMissingColumns(historicTableName, columns)
+    } else {
+        historicColumns := make([]columnStruct, len(columns), len(columns) + 2)
+        copy(historicColumns, columns)
+        historicColumns = append([]columnStruct{columnStruct{"last_historic_moment_id", "integer", 0, 0, 0, ""}}, historicColumns...)
+        historicColumns = append([]columnStruct{columnStruct{"first_historic_moment_id", "integer", 0, 0, 0, ""}}, historicColumns...)
+
+        if len(primaryKeyColumns) > 0 {
+            historicPrimaryKeyColumns := append(primaryKeyColumns, columnStruct{"first_historic_moment_id", "int", 0, 0, 0, ""})
+            createTable(db, historicTableName, historicColumns, historicPrimaryKeyColumns)
+        } else {
+            createTable(db, historicTableName, historicColumns, primaryKeyColumns)
+        }
+
+        createForeignKey(db, historicTableName, primaryKeyColumns, tableName)
+        copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
+    }
+}
+
+
+func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)  {
     columns := make([]columnStruct, 0, 100)
     primaryKeyColumns := make([]columnStruct, 0, 2)
 
@@ -109,12 +152,15 @@ func createOrUpdateHistoricTable(db *sql.DB, tableName string) {
             key_column_usage.table_catalog = table_constraints.table_catalog AND
             key_column_usage.table_schema = table_constraints.table_schema AND
             key_column_usage.table_name = table_constraints.table_name AND
+            key_column_usage.constraint_name = table_constraints.constraint_name AND
             table_constraints.constraint_type = 'PRIMARY KEY'
         )
         WHERE columns.table_schema = 'public'
         AND columns.table_name = '%s'
         ORDER BY columns.ordinal_position`,
         tableName)
+
+log.Println(s)
 
     rows, err := db.Query(s)
     if err != nil {
@@ -137,36 +183,26 @@ func createOrUpdateHistoricTable(db *sql.DB, tableName string) {
         log.Fatal(err)
     }
 
-    historicTableName := tableName + "_historic"
-
-    if tableExists(db, historicTableName) {
-        log.Println("historic table already exists :-)")
-        //addMissingColumns(historicTableName, columns)
-        copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
-    } else {
-        historicColumns := make([]columnStruct, len(columns), len(columns) + 2)
-        copy(historicColumns, columns)
-        historicColumns = append([]columnStruct{columnStruct{"last_historic_moment_id", "integer", 0, 0, 0, ""}}, historicColumns...)
-        historicColumns = append([]columnStruct{columnStruct{"first_historic_moment_id", "integer", 0, 0, 0, ""}}, historicColumns...)
-        historicPrimaryKeyColumns := append(primaryKeyColumns, columnStruct{"first_historic_moment_id", "int", 0, 0, 0, ""})
-        createTable(db, historicTableName, historicColumns, historicPrimaryKeyColumns)
-        createForeignKey(db, historicTableName, primaryKeyColumns, tableName)
-        copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
-    }
+    return columns, primaryKeyColumns
 }
 
 
 func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []columnStruct, historicTableName string, keyColumns []columnStruct) {
     columnsList := listColumns(columns)
-    s := fmt.Sprintf("INSERT INTO %s (%s, first_historic_moment_id)\nSELECT %s, %d FROM %s ORDER BY %s",
+    s := fmt.Sprintf("INSERT INTO %s (%s, first_historic_moment_id)\nSELECT %s, %d\nFROM %s",
             historicTableName,
             columnsList,
             columnsList,
             historicMomentId,
-            tableName,
-            listColumns(keyColumns))
+            tableName)
 
-    _, err := db.Query(s)
+    if len(keyColumns) > 0 {
+        s += "\nORDER BY " + listColumns(keyColumns)
+    }
+
+log.Println(s)
+
+    _, err := db.Exec(s)
     if err != nil {
         log.Fatal(err)
     }
@@ -176,36 +212,51 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
 func createTable(db *sql.DB, tableName string, columns []columnStruct, primaryKeyColumns []columnStruct) {
     s := "CREATE TABLE " + tableName + " (\n"
 
+    first := true
     for _, column := range columns {
+        if !first {
+            s += ", "
+        }
+
         if column.dataType == "character varying" {
             column.dataType = "varchar"
         }
 
-        s += "  " + column.columnName + " " + column.dataType
+        s += `  "` + column.columnName + `" ` + column.dataType
 
-        if column.dataType == "numeric" {
-            s += "(" + strconv.Itoa(column.numericPrecision) + "," + strconv.Itoa(column.numericScale) + ")"
+        if column.dataType == "numeric" && column.numericPrecision > 0 {
+            if column.numericScale > 0 {
+                s += fmt.Sprintf("(%d,%d)", column.numericPrecision, column.numericScale)
+            } else {
+                s += fmt.Sprintf("(%d)", column.numericPrecision)
+            }
         }
 
-        if column.dataType == "varchar" {
-            s += "(" + strconv.Itoa(column.characterMaximumLength) + ")"
+        if column.dataType == "varchar" && column.characterMaximumLength > 0 {
+            s += fmt.Sprintf("(%d)", column.characterMaximumLength)
         }
 
-        s += ", "
-    }
-
-    s += "  PRIMARY KEY ("
-    first := true
-    for _, primaryKeyColumn := range primaryKeyColumns {
-        if !first {
-            s += ", "
-        }
-        s += "    " + primaryKeyColumn.columnName
         first = false
     }
-    s += ")\n);"
 
-    _, err := db.Query(s)
+    if len(primaryKeyColumns) > 0 {
+        s += ",  PRIMARY KEY ("
+        first = true
+        for _, primaryKeyColumn := range primaryKeyColumns {
+            if !first {
+                s += ", "
+            }
+            s += "    " + primaryKeyColumn.columnName
+            first = false
+        }
+        s += ")"
+    }
+
+    s += "\n);"
+
+    log.Println(s)
+
+    _, err := db.Exec(s)
     if err != nil {
         log.Fatal(err)
     }
@@ -213,13 +264,19 @@ func createTable(db *sql.DB, tableName string, columns []columnStruct, primaryKe
 
 
 func createForeignKey(db *sql.DB, childTableName string, columns []columnStruct, parentTableName string) {
+    if len(columns) == 0 {
+        return
+    }
+
     s := "ALTER TABLE " + childTableName + " ADD CONSTRAINT " + parentTableName + "_fk FOREIGN KEY ("
     s += listColumns(columns)
     s += ") REFERENCES " + parentTableName + " ("
     s += listColumns(columns)
     s += ")"
 
-    _, err := db.Query(s)
+log.Println(s)
+
+    _, err := db.Exec(s)
     if err != nil {
         log.Fatal(err)
     }
@@ -233,7 +290,7 @@ func listColumns(columns []columnStruct) string {
         if !first {
             s += ", "
         }
-        s += column.columnName
+        s += `"` + column.columnName + `"`
         first = false
     }
     return s
@@ -241,25 +298,38 @@ func listColumns(columns []columnStruct) string {
 
 
 func tableExists(db *sql.DB, tableName string) bool {
-    value, _ := tableNames[tableName]
-    if !value {
-        rows, err := db.Query("SELECT COUNT(*) count " +
-                              "FROM information_schema.tables " +
-                              "WHERE table_schema='public' " +
-                              "AND table_name='" + tableName + "'")
-        if err != nil {
-            log.Fatal(err)
-        }
+    if sliceContains(tableNames, tableName) {
+        return true
+    }
 
-        defer rows.Close()
-        rows.Next()
-        var count int
-        rows.Scan(&count)
-        if count == 1 {
+    s := fmt.Sprintf(`SELECT COUNT(*) count
+        FROM information_schema.tables
+        WHERE table_schema='public'
+        AND table_name='%s'`,
+        tableName)
+    rows, err := db.Query(s)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer rows.Close()
+    rows.Next()
+
+    var count int
+    rows.Scan(&count)
+    if count == 1 {
+        return true
+    }
+    return false
+}
+
+
+func sliceContains(slice []string, str string) bool {
+    for _, s := range slice {
+        if s == str {
             return true
         }
-
     }
-    return value
+    return false
 }
 
