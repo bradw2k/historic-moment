@@ -17,16 +17,23 @@ type columnStruct struct {
     constraintType string
 }
 
+type statisticsStruct struct {
+    newCount int
+    updatedCount int
+    deletedCount int
+    errorCount int
+    workLog string
+}
+
+var verbose bool
 var historicMomentId int
 var tableNames []string
-var newCount int
-var updatedCount int
-var deletedCount int
-var errorCount int
-var workLog string
-
+var statistics statisticsStruct
 
 func main() {
+    verbose = true
+    statistics = statisticsStruct{}
+
     tableNames = make([]string, 0, 100)
     db, err := sql.Open("postgres", "user=bradwilliams dbname=fbi_development sslmode=disable")
     if err != nil {
@@ -62,7 +69,7 @@ func main() {
     }
 
     if !tableExists(db, "historic_moments") {
-        s := `CREATE TABLE historic_moments (
+        s = `CREATE TABLE historic_moments (
             id serial PRIMARY KEY,
             context varchar(200),
             new_count integer,
@@ -90,16 +97,28 @@ func main() {
         log.Fatal(err)
     }
 
-    log.Println(historicMomentId)
-
-
-
-    //processTable(db, "bmg_rk_masters")
-
+    verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentId))
 
     for _, tableName := range tableNames {
         log.Println(tableName)
         processTable(db, tableName)
+    }
+
+    s = fmt.Sprintf(`UPDATE historic_moments
+        SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, work_log='%s', completed_at=CURRENT_TIMESTAMP
+        WHERE id=%d`,
+            statistics.newCount,
+            statistics.updatedCount,
+            statistics.deletedCount,
+            statistics.errorCount,
+            statistics.workLog,
+            historicMomentId);
+
+    verboseLog(s)
+
+    _, err = db.Exec(s)
+    if err != nil {
+        log.Fatal(err)
     }
 }
 
@@ -115,7 +134,7 @@ func createOrUpdateHistoricTable(db *sql.DB, tableName string) {
     historicTableName := tableName + "_historic"
 
     if tableExists(db, historicTableName) {
-        log.Println("historic table already exists :-)")
+        verboseLog("historic table already exists :-)")
         //addMissingColumns(historicTableName, columns)
     } else {
         historicColumns := make([]columnStruct, len(columns), len(columns) + 2)
@@ -131,7 +150,7 @@ func createOrUpdateHistoricTable(db *sql.DB, tableName string) {
         }
 
         createForeignKey(db, historicTableName, primaryKeyColumns, tableName)
-        copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
+        newCount += copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
     }
 }
 
@@ -160,7 +179,7 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
         ORDER BY columns.ordinal_position`,
         tableName)
 
-log.Println(s)
+    verboseLog(s)
 
     rows, err := db.Query(s)
     if err != nil {
@@ -187,7 +206,7 @@ log.Println(s)
 }
 
 
-func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []columnStruct, historicTableName string, keyColumns []columnStruct) {
+func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []columnStruct, historicTableName string, keyColumns []columnStruct) int {
     columnsList := listColumns(columns)
     s := fmt.Sprintf("INSERT INTO %s (%s, first_historic_moment_id)\nSELECT %s, %d\nFROM %s",
             historicTableName,
@@ -200,12 +219,25 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
         s += "\nORDER BY " + listColumns(keyColumns)
     }
 
-log.Println(s)
+    verboseLog(s)
 
     _, err := db.Exec(s)
     if err != nil {
         log.Fatal(err)
     }
+
+    s = "SELECT COUNT(*) count FROM " + historicTableName
+    rows, err := db.Query(s)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    defer rows.Close()
+    rows.Next()
+
+    var count int
+    rows.Scan(&count)
+    return count
 }
 
 
@@ -254,7 +286,7 @@ func createTable(db *sql.DB, tableName string, columns []columnStruct, primaryKe
 
     s += "\n);"
 
-    log.Println(s)
+    verboseLog(s)
 
     _, err := db.Exec(s)
     if err != nil {
@@ -331,5 +363,12 @@ func sliceContains(slice []string, str string) bool {
         }
     }
     return false
+}
+
+
+func verboseLog(s string) {
+    if verbose {
+        log.Println(s)
+    }
 }
 
