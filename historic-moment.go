@@ -382,8 +382,8 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
     if err != nil {
         log.Fatal(err)
     }
-
     defer rows.Close()
+    
     rows.Next()
 
     var count int
