@@ -3,10 +3,21 @@ package main
 import (
     "fmt"
     "log"
-    //"strconv"
+    "os"
+    "io/ioutil"
+    "regexp"
+    "gopkg.in/yaml.v2"
     "database/sql"
     _ "github.com/lib/pq"
 )
+
+type configStruct struct {
+    Connection string
+    Ignorecolumns string
+    Ignoretables string
+    Tablenamepostfix string
+    Verbose string
+}
 
 type columnStruct struct {
     columnName string
@@ -25,30 +36,71 @@ type statisticsStruct struct {
     workLog string
 }
 
+var config configStruct
 var verbose bool
 var historicMomentId int
 var tableNames []string
 var statistics statisticsStruct
 
+/*
+
+USAGE: go run historic-moment.go
+USAGE: go run historic-moment.go /optional/path/to/historic-moment.conf
+
+Example historic-moment.config YAML file:
+
+  ---
+  connection: host=localhost dbname=fbi_development sslmode=disable
+  ignorecolumns: updated_at
+  ignoretables: (f_.*)|(session_table)
+  tablenamepostfix: archives
+  verbose: true
+
+*/
 
 func main() {
     verbose = true
     statistics = statisticsStruct{}
     tableNames = make([]string, 0, 100)
+    configPath := "historic-moment.conf"
 
-    db, err := sql.Open("postgres", "user=bradwilliams dbname=fbi_development sslmode=disable")
+    if len(os.Args) > 1 {
+        configPath = os.Args[1]
+    }
+
+    configStr, err := ioutil.ReadFile(configPath)
+    config = configStruct{}
+
+    err = yaml.Unmarshal([]byte(configStr), &config)
+    if err != nil {
+        log.Fatalf("error: %v", err)
+    }
+
+    if config.Tablenamepostfix == "" {
+        config.Tablenamepostfix = "historic"
+    }
+
+    if config.Verbose == "" || config.Verbose == "false" {
+        verbose = false
+    }
+
+    db, err := sql.Open("postgres", config.Connection)
     if err != nil {
         log.Fatal(err)
     }
 
     s := `SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema='public'
-        AND table_name NOT LIKE '%_historic'
+        WHERE table_schema = 'public'
+        AND table_name NOT LIKE '%s'
         AND table_name NOT LIKE 'historic_moments'
+        AND table_type ILIKE 'BASE TABLE'
         ORDER BY table_name`
+    sql := fmt.Sprintf(s, `%_` + config.Tablenamepostfix)
 
-    rows, err := db.Query(s)
+    verboseLog(sql)
+
+    rows, err := db.Query(sql)
     if err != nil {
         log.Fatal(err)
     }
@@ -61,7 +113,10 @@ func main() {
             log.Fatal(err)
         }
 
-        tableNames = append(tableNames, tableName)
+        match, _ := regexp.MatchString(config.Ignoretables, tableName)
+        if !match {
+            tableNames = append(tableNames, tableName)
+        }
     }
 
     err = rows.Err()
@@ -101,7 +156,9 @@ func main() {
     verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentId))
 
     for _, tableName := range tableNames {
-        processTable(db, tableName)
+        if tableName == "clients" {
+            processTable(db, tableName)
+        }
     }
 
     s = fmt.Sprintf(`UPDATE historic_moments
@@ -128,7 +185,7 @@ func processTable(db *sql.DB, tableName string) {
 
     columns, primaryKeyColumns := getTableInfo(db, tableName)
 
-    historicTableName := tableName + "_historic"
+    historicTableName := tableName + "_" + config.Tablenamepostfix
     historicColumns := make([]columnStruct, len(columns), len(columns) + 2)
     copy(historicColumns, columns)
     historicColumns = append([]columnStruct{columnStruct{"last_historic_moment_id", "integer", 0, 0, 0, ""}}, historicColumns...)
@@ -153,12 +210,9 @@ func processTable(db *sql.DB, tableName string) {
 
 
 func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, columns []columnStruct, primaryKeyColumns []columnStruct, historicTableName string, historicColumns []columnStruct) int {
-    first := true
-    onClause := "\n"
+    onClause := fmt.Sprintf("\n         " + `%s."last_historic_moment_id" IS NULL`, historicTableName)
     for _, column := range columns {
-        if !first {
-            onClause += " AND\n"
-        }
+        onClause += " AND\n"
 
         template := `         %s."%s" IS NOT DISTINCT FROM %s."%s"`
         if containsColumn(primaryKeyColumns, column) {
@@ -170,7 +224,6 @@ func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, col
             column.columnName,
             historicTableName,
             column.columnName)
-        first = false
     }
 
     s := fmt.Sprintf(`INSERT INTO %s(%s)
@@ -201,7 +254,7 @@ func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, col
 
 func setLastHistoricMomentIdOnPreviousHistoricRecords(db *sql.DB, tableName string, columns []columnStruct, primaryKeyColumns []columnStruct, historicTableName string, historicColumns []columnStruct) int {
     whereClause := "\n"
-    for _, column := range columns {
+    for _, column := range primaryKeyColumns {
         whereClause += fmt.Sprintf(`            AND %s."%s" = innie."%s"` + "\n",
             historicTableName,
             column.columnName,
@@ -301,7 +354,6 @@ func createHistoricTable(db *sql.DB, tableName string, columns []columnStruct, p
         createTable(db, historicTableName, historicColumns, primaryKeyColumns)
     }
 
-    //createForeignKey(db, historicTableName, primaryKeyColumns, tableName)
     return copyAllRecordsToHistoricTable(db, tableName, columns, historicTableName, primaryKeyColumns)
 }
 
@@ -343,9 +395,13 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
         if err != nil {
             log.Fatal(err)
         }
-        columns = append(columns, columnInfo)
-        if columnInfo.constraintType == "PRIMARY KEY" {
-            primaryKeyColumns = append(primaryKeyColumns, columnInfo)
+
+        match, _ := regexp.MatchString(config.Ignorecolumns, columnInfo.columnName)
+        if !match {
+            columns = append(columns, columnInfo)
+            if columnInfo.constraintType == "PRIMARY KEY" {
+                primaryKeyColumns = append(primaryKeyColumns, columnInfo)
+            }
         }
     }
     err = rows.Err()
@@ -444,26 +500,6 @@ func getColumnSpecification(column columnStruct) string {
 }
 
 
-func createForeignKey(db *sql.DB, childTableName string, columns []columnStruct, parentTableName string) {
-    if len(columns) == 0 {
-        return
-    }
-
-    s := "ALTER TABLE " + childTableName + " ADD CONSTRAINT " + parentTableName + "_fk FOREIGN KEY ("
-    s += listColumns(columns)
-    s += ") REFERENCES " + parentTableName + " ("
-    s += listColumns(columns)
-    s += ")"
-
-    verboseLog(s)
-
-    _, err := db.Exec(s)
-    if err != nil {
-        log.Fatal(err)
-    }
-}
-
-
 func listColumns(columns []columnStruct) string {
     s := ""
     first := true
@@ -512,10 +548,7 @@ func tableExists(db *sql.DB, tableName string) bool {
 
     var count int
     rows.Scan(&count)
-    if count == 1 {
-        return true
-    }
-    return false
+    return count == 1
 }
 
 
@@ -544,4 +577,3 @@ func verboseLog(s string) {
         log.Println(s)
     }
 }
-
