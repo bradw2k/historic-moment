@@ -52,7 +52,7 @@ Example historic-moment.config YAML file:
   ---
   connection: host=localhost dbname=fbi_development sslmode=disable
   ignorecolumns: updated_at
-  ignoretables: (f_.*)|(session_table)
+  ignoretables: (f_.*)|(session_table)|(temp.*)
   tablenamepostfix: archives
   verbose: true
 
@@ -156,9 +156,7 @@ func main() {
     verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentId))
 
     for _, tableName := range tableNames {
-        if tableName == "clients" {
-            processTable(db, tableName)
-        }
+        processTable(db, tableName)
     }
 
     s = fmt.Sprintf(`UPDATE historic_moments
