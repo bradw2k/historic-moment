@@ -437,7 +437,7 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
         log.Fatal(err)
     }
     defer rows.Close()
-    
+
     rows.Next()
 
     var count int
@@ -490,7 +490,7 @@ func getColumnSpecification(column columnStruct) string {
         }
     }
 
-    if column.dataType == "varchar" && column.characterMaximumLength > 0 {
+    if (column.dataType == "varchar" || column.dataType == "character") && column.characterMaximumLength > 0 {
         s += fmt.Sprintf("(%d)", column.characterMaximumLength)
     }
 
