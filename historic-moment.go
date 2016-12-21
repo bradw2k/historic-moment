@@ -3,13 +3,14 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	_ "github.com/lib/pq"
-	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
 	"strings"
+
+	_ "github.com/lib/pq"
+	"gopkg.in/yaml.v2"
 )
 
 type configStruct struct {
@@ -64,6 +65,7 @@ Example historic-moment.config YAML file:
 */
 
 func main() {
+	log.SetOutput(os.Stdout)
 	verbose = true
 	statistics = statisticsStruct{}
 	tableNames = make([]string, 0, 100)
