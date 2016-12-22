@@ -1,0 +1,23 @@
+# USAGE: go run historic-moment.go
+
+# USAGE: go run historic-moment.go /optional/path/to/historic-moment.conf
+
+* Example historic-moment.config YAML file, where curly braces cause ENV replacements:
+
+dbhost: host={RDS_ENDPOINT}
+
+dbname: dbname={RDS_NAME}
+
+dbuser: user={RDS_USER}
+
+dbpassword: password={RDS_PASSWORD}
+
+dbssl: sslmode=disable
+
+ignorecolumns: updated_at
+
+ignoretables: (f_.*)|(session_table)|(temp.*)
+
+tablenamepostfix: archives
+
+verbose: true
