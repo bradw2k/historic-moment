@@ -48,6 +48,8 @@ var historicMomentId int
 var tableNames []string
 var statistics statisticsStruct
 
+var vb string // verboseLog cumulative string
+
 /*
 
 USAGE: go run historic-moment.go
@@ -65,6 +67,8 @@ Example historic-moment.config YAML file:
 */
 
 func main() {
+
+	fmt.Printf("######## at the begining of main: %s\n", vb)
 	log.SetOutput(os.Stdout)
 	verbose = true
 	statistics = statisticsStruct{}
@@ -93,7 +97,7 @@ func main() {
 
 	configuration := []string{config.DbHost, config.DbName, config.DbUser, config.DbPassword, config.DbSsl}
 
-	fmt.Printf("before regex: %v\n", configuration)
+	// fmt.Printf("before regex: %v\n", configuration)
 
 	my_reg := regexp.MustCompile("\\{.*\\}")
 	for i, v := range configuration {
@@ -102,8 +106,6 @@ func main() {
 		})
 	}
 	configured_connection := strings.Join(configuration, " ")
-
-	fmt.Printf("after regex and join: %v\n", strings.Join(configuration, " "))
 
 	db, err := sql.Open("postgres", configured_connection) //config.Connection)
 	if err != nil {
@@ -120,6 +122,8 @@ func main() {
 	sql := fmt.Sprintf(s, `%_`+config.Tablenamepostfix)
 
 	verboseLog(sql)
+
+	fmt.Printf("############# after first vb call in main: %s\n", vb)
 
 	rows, err := db.Query(sql)
 	if err != nil {
@@ -174,13 +178,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentId))
+	s = fmt.Sprintf("historicMomentId = %d", historicMomentId)
+	verboseLog(s)
 
 	for _, tableName := range tableNames {
 		processTable(db, tableName)
 	}
-
-	s = fmt.Sprintf(`UPDATE historic_moments
+	statistics.workLog = "true"
+	pre := fmt.Sprintf(`UPDATE historic_moments
         SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, work_log='%s', completed_at=CURRENT_TIMESTAMP
         WHERE id=%d`,
 		statistics.newCount,
@@ -190,9 +195,24 @@ func main() {
 		statistics.workLog,
 		historicMomentId)
 
-	verboseLog(s)
+	verboseLog(pre)
 
+	statistics.workLog = vb
+
+	s = fmt.Sprintf(`UPDATE historic_moments
+	SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, completed_at=CURRENT_TIMESTAMP
+	WHERE id=%d`,
+		statistics.newCount,
+		statistics.updatedCount,
+		statistics.deletedCount,
+		statistics.errorCount,
+		historicMomentId)
 	_, err = db.Exec(s)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), statistics.workLog, historicMomentId)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -224,6 +244,7 @@ func processTable(db *sql.DB, tableName string) {
 	} else {
 		statistics.newCount += createHistoricTable(db, tableName, columns, primaryKeyColumns, historicTableName, historicColumns, historicPrimaryKeyColumns)
 	}
+
 }
 
 func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, columns []columnStruct, primaryKeyColumns []columnStruct, historicTableName string, historicColumns []columnStruct) int {
@@ -577,6 +598,8 @@ func containsColumn(slice []columnStruct, column columnStruct) bool {
 
 func verboseLog(s string) {
 	if verbose {
+		vb += s
 		log.Println(s)
+
 	}
 }
