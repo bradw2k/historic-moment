@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"strings"
 
 	_ "github.com/lib/pq"
 	"gopkg.in/yaml.v2"
@@ -44,7 +43,7 @@ type statisticsStruct struct {
 
 var config configStruct
 var verbose bool
-var historicMomentId int
+var historicMomentID int
 var tableNames []string
 var statistics statisticsStruct
 
@@ -67,8 +66,6 @@ Example historic-moment.config YAML file:
 */
 
 func main() {
-
-	fmt.Printf("######## at the begining of main: %s\n", vb)
 	log.SetOutput(os.Stdout)
 	verbose = true
 	statistics = statisticsStruct{}
@@ -80,6 +77,9 @@ func main() {
 	}
 
 	configStr, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
 	config = configStruct{}
 
 	err = yaml.Unmarshal([]byte(configStr), &config)
@@ -95,19 +95,8 @@ func main() {
 		verbose = false
 	}
 
-	configuration := []string{config.DbHost, config.DbName, config.DbUser, config.DbPassword, config.DbSsl}
+	db, err := getConnection(config)
 
-	// fmt.Printf("before regex: %v\n", configuration)
-
-	my_reg := regexp.MustCompile("\\{.*\\}")
-	for i, v := range configuration {
-		configuration[i] = my_reg.ReplaceAllStringFunc(v, func(substr string) string {
-			return os.Getenv(substr[1 : len(substr)-1])
-		})
-	}
-	configured_connection := strings.Join(configuration, " ")
-
-	db, err := sql.Open("postgres", configured_connection) //config.Connection)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -122,8 +111,6 @@ func main() {
 	sql := fmt.Sprintf(s, `%_`+config.Tablenamepostfix)
 
 	verboseLog(sql)
-
-	fmt.Printf("############# after first vb call in main: %s\n", vb)
 
 	rows, err := db.Query(sql)
 	if err != nil {
@@ -173,13 +160,12 @@ func main() {
 	}
 	defer rows.Close()
 	rows.Next()
-	err = rows.Scan(&historicMomentId)
+	err = rows.Scan(&historicMomentID)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	s = fmt.Sprintf("historicMomentId = %d", historicMomentId)
-	verboseLog(s)
+	verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentID))
 
 	for _, tableName := range tableNames {
 		processTable(db, tableName)
@@ -193,7 +179,7 @@ func main() {
 		statistics.deletedCount,
 		statistics.errorCount,
 		statistics.workLog,
-		historicMomentId)
+		historicMomentID)
 
 	verboseLog(pre)
 
@@ -206,16 +192,38 @@ func main() {
 		statistics.updatedCount,
 		statistics.deletedCount,
 		statistics.errorCount,
-		historicMomentId)
+		historicMomentID)
 	_, err = db.Exec(s)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), statistics.workLog, historicMomentId)
+	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), statistics.workLog, historicMomentID)
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func getConnection(config configStruct) (*sql.DB, error) {
+	configuration := []string{config.DbHost, config.DbName, config.DbUser, config.DbPassword, config.DbSsl}
+
+	myReg := regexp.MustCompile(`\${.*}`)
+
+	for i, v := range configuration {
+		configuration[i] = myReg.ReplaceAllStringFunc(v, func(substr string) string {
+			return os.Getenv(substr[2 : len(substr)-1])
+		})
+	}
+
+	configuredConnection := fmt.Sprintf("host=%v dbname=%v user=%v", configuration[0], configuration[1], configuration[2])
+	if configuration[3] != "" {
+		configuredConnection += fmt.Sprintf(" password=%v", configuration[3])
+	}
+	if configuration[4] != "" {
+		configuredConnection += fmt.Sprintf(" sslmode=%v", configuration[4])
+	}
+
+	return sql.Open("postgres", configuredConnection)
 }
 
 func processTable(db *sql.DB, tableName string) {
@@ -271,7 +279,7 @@ func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, col
         WHERE %s."%s" IS NULL`,
 		historicTableName,
 		listColumns(historicColumns),
-		historicMomentId,
+		historicMomentID,
 		listColumnsWithTableName(tableName, columns),
 		tableName,
 		historicTableName,
@@ -307,10 +315,10 @@ func setLastHistoricMomentIdOnPreviousHistoricRecords(db *sql.DB, tableName stri
             FROM %s innie
             WHERE "first_historic_moment_id" = %d%s)`,
 		historicTableName,
-		historicMomentId,
-		historicMomentId,
+		historicMomentID,
+		historicMomentID,
 		historicTableName,
-		historicMomentId,
+		historicMomentID,
 		whereClause)
 
 	verboseLog(s)
@@ -347,7 +355,7 @@ func setLastHistoricMomentIdForDeletedRecords(db *sql.DB, tableName string, colu
             WHERE %s
         )`,
 		historicTableName,
-		historicMomentId,
+		historicMomentID,
 		tableName,
 		whereClause)
 
@@ -451,7 +459,7 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
 		historicTableName,
 		columnsList,
 		columnsList,
-		historicMomentId,
+		historicMomentID,
 		tableName)
 
 	if len(keyColumns) > 0 {
