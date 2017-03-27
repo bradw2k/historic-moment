@@ -47,7 +47,26 @@ var historicMomentID int
 var tableNames []string
 var statistics statisticsStruct
 
+var vb string // verboseLog cumulative string
+
+/*
+
+USAGE: go run historic-moment.go
+USAGE: go run historic-moment.go /optional/path/to/historic-moment.conf
+
+Example historic-moment.config YAML file:
+
+  ---
+  connection: host=localhost dbname=fbi_development sslmode=disable
+  ignorecolumns: updated_at
+  ignoretables: (f_.*)|(session_table)|(temp.*)
+  tablenamepostfix: archives
+  verbose: true
+
+*/
+
 func main() {
+	log.SetOutput(os.Stdout)
 	verbose = true
 	statistics = statisticsStruct{}
 	tableNames = make([]string, 0, 100)
@@ -58,6 +77,9 @@ func main() {
 	}
 
 	configStr, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
 	config = configStruct{}
 
 	err = yaml.Unmarshal([]byte(configStr), &config)
@@ -74,6 +96,7 @@ func main() {
 	}
 
 	db, err := getConnection(config)
+
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -147,8 +170,8 @@ func main() {
 	for _, tableName := range tableNames {
 		processTable(db, tableName)
 	}
-
-	s = fmt.Sprintf(`UPDATE historic_moments
+	statistics.workLog = "true"
+	pre := fmt.Sprintf(`UPDATE historic_moments
         SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, work_log='%s', completed_at=CURRENT_TIMESTAMP
         WHERE id=%d`,
 		statistics.newCount,
@@ -158,9 +181,24 @@ func main() {
 		statistics.workLog,
 		historicMomentID)
 
-	verboseLog(s)
+	verboseLog(pre)
 
+	statistics.workLog = vb
+
+	s = fmt.Sprintf(`UPDATE historic_moments
+	SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, completed_at=CURRENT_TIMESTAMP
+	WHERE id=%d`,
+		statistics.newCount,
+		statistics.updatedCount,
+		statistics.deletedCount,
+		statistics.errorCount,
+		historicMomentID)
 	_, err = db.Exec(s)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), statistics.workLog, historicMomentID)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -184,8 +222,6 @@ func getConnection(config configStruct) (*sql.DB, error) {
 	if configuration[4] != "" {
 		configuredConnection += fmt.Sprintf(" sslmode=%v", configuration[4])
 	}
-
-	fmt.Printf("after regex and join: %v\n", configuredConnection)
 
 	return sql.Open("postgres", configuredConnection)
 }
@@ -216,6 +252,7 @@ func processTable(db *sql.DB, tableName string) {
 	} else {
 		statistics.newCount += createHistoricTable(db, tableName, columns, primaryKeyColumns, historicTableName, historicColumns, historicPrimaryKeyColumns)
 	}
+
 }
 
 func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, columns []columnStruct, primaryKeyColumns []columnStruct, historicTableName string, historicColumns []columnStruct) int {
@@ -569,6 +606,8 @@ func containsColumn(slice []columnStruct, column columnStruct) bool {
 
 func verboseLog(s string) {
 	if verbose {
+		vb += s
 		log.Println(s)
+
 	}
 }
