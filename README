@@ -4,15 +4,17 @@
 
 * Example historic-moment.config YAML file, where curly braces cause ENV replacements:
 
-dbhost: host={RDS_ENDPOINT}
+---
 
-dbname: dbname={RDS_NAME}
+dbhost: ${RDS_ENDPOINT}
 
-dbuser: user={RDS_USER}
+dbname: ${RDS_NAME}
 
-dbpassword: password={RDS_PASSWORD}
+dbuser: ${RDS_USER}
 
-dbssl: sslmode=disable
+dbpassword: ${RDS_PASSWORD}
+
+dbssl: ${RDS_SSLMODE}
 
 ignorecolumns: updated_at
 

@@ -46,8 +46,7 @@ var verbose bool
 var historicMomentID int
 var tableNames []string
 var statistics statisticsStruct
-
-var vb string // verboseLog cumulative string
+var vb string
 
 /*
 
@@ -56,12 +55,16 @@ USAGE: go run historic-moment.go /optional/path/to/historic-moment.conf
 
 Example historic-moment.config YAML file:
 
-  ---
-  connection: host=localhost dbname=fbi_development sslmode=disable
-  ignorecolumns: updated_at
-  ignoretables: (f_.*)|(session_table)|(temp.*)
-  tablenamepostfix: archives
-  verbose: true
+---
+dbhost: ${RDS_ENDPOINT}
+dbname: ${RDS_NAME}
+dbuser: ${RDS_USER}
+dbpassword: ${RDS_PASSWORD}
+dbssl: disable
+ignorecolumns: updated_at
+ignoretables: (f_.*)|(session_table)|(temp.*)
+tablenamepostfix: archives
+verbose: true
 
 */
 
@@ -170,35 +173,22 @@ func main() {
 	for _, tableName := range tableNames {
 		processTable(db, tableName)
 	}
-	statistics.workLog = "true"
-	pre := fmt.Sprintf(`UPDATE historic_moments
-        SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, work_log='%s', completed_at=CURRENT_TIMESTAMP
-        WHERE id=%d`,
-		statistics.newCount,
-		statistics.updatedCount,
-		statistics.deletedCount,
-		statistics.errorCount,
-		statistics.workLog,
-		historicMomentID)
-
-	verboseLog(pre)
-
-	statistics.workLog = vb
 
 	s = fmt.Sprintf(`UPDATE historic_moments
-	SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, completed_at=CURRENT_TIMESTAMP
-	WHERE id=%d`,
+			SET new_count=%d, updated_count=%d, deleted_count=%d, error_count=%d, completed_at=CURRENT_TIMESTAMP
+			WHERE id=%d`,
 		statistics.newCount,
 		statistics.updatedCount,
 		statistics.deletedCount,
 		statistics.errorCount,
 		historicMomentID)
+	verboseLog(s)
 	_, err = db.Exec(s)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), statistics.workLog, historicMomentID)
+	_, err = db.Exec(fmt.Sprint(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`), vb, historicMomentID)
 	if err != nil {
 		log.Fatal(err)
 	}
