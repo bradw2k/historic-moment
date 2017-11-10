@@ -524,18 +524,13 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
 
 	verboseLog(s)
 
-	_, err := db.Exec(fmt.Sprintf("INSERT INTO %s (%s, first_historic_moment_id)\nSELECT %s, $1\nFROM %s",
-																	historicTableName,
-																	columnsList,
-																	columnsList,
-																	tableName),
-	historicMomentID)
+	_, err := db.Exec(s)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	s = "SELECT COUNT(*) count FROM $1"
-	rows, err := db.Query(s, historicTableName)
+	s = "SELECT COUNT(*) count FROM " + historicTableName
+	rows, err := db.Query(s)
 	if err != nil {
 		log.Fatal(err)
 	}
