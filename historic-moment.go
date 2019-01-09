@@ -311,7 +311,7 @@ func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, col
 		primaryKeyColumns[0].columnName),
 		historicMomentID)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	return 0
@@ -356,7 +356,7 @@ func setLastHistoricMomentIdOnPreviousHistoricRecords(db *sql.DB, tableName stri
 		whereClause),
 		historicMomentID, historicMomentID, historicMomentID)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	return 0
@@ -405,7 +405,7 @@ func setLastHistoricMomentIdForDeletedRecords(db *sql.DB, tableName string, colu
 		whereClause),
 		historicMomentID)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	return 0
@@ -425,7 +425,7 @@ func addMissingColumns(db *sql.DB, tableName string, requiredColumns []columnStr
 
 		_, err := db.Exec(s)
 		if err != nil {
-			log.Fatal(err)
+			handleErrorAndExit(err)
 		}
 	}
 }
@@ -487,14 +487,14 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
         GROUP BY columns.column_name, columns.data_type, columns.character_maximum_length, columns.numeric_precision, columns.numeric_scale, table_constraints.constraint_type
         ORDER BY min(columns.ordinal_position)`, tableName)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		columnInfo := columnStruct{}
 		err3 := rows.Scan(&columnInfo.columnName, &columnInfo.dataType, &columnInfo.characterMaximumLength, &columnInfo.numericPrecision, &columnInfo.numericScale, &columnInfo.constraintType)
 		if err3 != nil {
-			log.Fatal(err)
+			handleErrorAndExit(err)
 		}
 
 		match, _ := regexp.MatchString(config.Ignorecolumns, columnInfo.columnName)
@@ -507,7 +507,7 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
 	}
 	err = rows.Err()
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	return columns, primaryKeyColumns
@@ -530,13 +530,13 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
 
 	_, err := db.Exec(s)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	s = "SELECT COUNT(*) count FROM " + historicTableName
 	rows, err := db.Query(s)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 	defer rows.Close()
 
@@ -571,7 +571,7 @@ func createTable(db *sql.DB, tableName string, columns []columnStruct, primaryKe
 
 	_, err := db.Exec(s)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 }
 
@@ -634,7 +634,7 @@ func tableExists(db *sql.DB, tableName string) bool {
         AND table_name=$1`
 	rows, err := db.Query(s, tableName)
 	if err != nil {
-		log.Fatal(err)
+		handleErrorAndExit(err)
 	}
 
 	defer rows.Close()
