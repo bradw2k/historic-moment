@@ -71,6 +71,8 @@ verbose: true
 
 func main() {
 	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Lshortfile)
+
 	verbose = true
 	statistics = statisticsStruct{}
 	tableNames = make([]string, 0, 100)
@@ -145,6 +147,7 @@ func main() {
 
 	err = rows.Err()
 	if err != nil {
+		rows.Close()
 		handleErrorAndExit(err)
 	}
 
