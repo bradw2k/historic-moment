@@ -47,7 +47,6 @@ var historicMomentID int
 var tableNames []string
 var statistics statisticsStruct
 var vb string
-var db *sql.DB
 
 /*
 
@@ -71,7 +70,6 @@ verbose: true
 
 func main() {
 	log.SetOutput(os.Stdout)
-	log.SetFlags(log.Lshortfile)
 
 	verbose = true
 	statistics = statisticsStruct{}
@@ -101,8 +99,7 @@ func main() {
 		verbose = false
 	}
 
-	db, err = getConnection(config)
-	defer db.Close()
+	db, err := getConnection(config)
 
 	if err != nil {
 		log.Fatal(err)
@@ -127,7 +124,7 @@ func main() {
         AND table_type ILIKE 'BASE TABLE'
         ORDER BY table_name`, `%_`+config.Tablenamepostfix)
 	if err != nil {
-		handleErrorAndExit(err)
+		log.Fatal(err)
 	}
 
 	defer rows.Close()
@@ -136,7 +133,7 @@ func main() {
 		err1 := rows.Scan(&tableName)
 		if err1 != nil {
 			rows.Close()
-			handleErrorAndExit(err1)
+			log.Fatal(err1)
 		}
 
 		match, _ := regexp.MatchString(config.Ignoretables, tableName)
@@ -148,7 +145,7 @@ func main() {
 	err = rows.Err()
 	if err != nil {
 		rows.Close()
-		handleErrorAndExit(err)
+		log.Fatal(err)
 	}
 
 	if !tableExists(db, "historic_moments") {
@@ -165,20 +162,21 @@ func main() {
             )`
 		_, err2 := db.Query(s)
 		if err2 != nil {
-			handleErrorAndExit(err2)
+			log.Fatal(err2)
 		}
 	}
 
 	rows, err = db.Query("INSERT INTO historic_moments (context) VALUES ('standard') RETURNING id")
 	if err != nil {
-		handleErrorAndExit(err)
+		log.Fatal(err)
 	}
+
 	defer rows.Close()
 	rows.Next()
 	err = rows.Scan(&historicMomentID)
 	if err != nil {
 		rows.Close()
-		handleErrorAndExit(err)
+		log.Fatal(err)
 	}
 
 	verboseLog(fmt.Sprintf("historicMomentId = %d", historicMomentID))
@@ -205,10 +203,10 @@ func main() {
 		statistics.errorCount,
 		historicMomentID)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
-	finishJob()
+	finishJob(db)
 }
 
 func getConnection(config configStruct) (*sql.DB, error) {
@@ -311,7 +309,7 @@ func addHistoricRecordsForNewAndChangedRecords(db *sql.DB, tableName string, col
 		primaryKeyColumns[0].columnName),
 		historicMomentID)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	return 0
@@ -356,7 +354,7 @@ func setLastHistoricMomentIdOnPreviousHistoricRecords(db *sql.DB, tableName stri
 		whereClause),
 		historicMomentID, historicMomentID, historicMomentID)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	return 0
@@ -405,7 +403,7 @@ func setLastHistoricMomentIdForDeletedRecords(db *sql.DB, tableName string, colu
 		whereClause),
 		historicMomentID)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	return 0
@@ -425,7 +423,7 @@ func addMissingColumns(db *sql.DB, tableName string, requiredColumns []columnStr
 
 		_, err := db.Exec(s)
 		if err != nil {
-			handleErrorAndExit(err)
+			handleErrorAndExit(err, db)
 		}
 	}
 }
@@ -487,14 +485,14 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
         GROUP BY columns.column_name, columns.data_type, columns.character_maximum_length, columns.numeric_precision, columns.numeric_scale, table_constraints.constraint_type
         ORDER BY min(columns.ordinal_position)`, tableName)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		columnInfo := columnStruct{}
 		err3 := rows.Scan(&columnInfo.columnName, &columnInfo.dataType, &columnInfo.characterMaximumLength, &columnInfo.numericPrecision, &columnInfo.numericScale, &columnInfo.constraintType)
 		if err3 != nil {
-			handleErrorAndExit(err)
+			handleErrorAndExit(err, db)
 		}
 
 		match, _ := regexp.MatchString(config.Ignorecolumns, columnInfo.columnName)
@@ -507,7 +505,7 @@ func getTableInfo(db *sql.DB, tableName string) ([]columnStruct, []columnStruct)
 	}
 	err = rows.Err()
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	return columns, primaryKeyColumns
@@ -530,13 +528,13 @@ func copyAllRecordsToHistoricTable(db *sql.DB, tableName string, columns []colum
 
 	_, err := db.Exec(s)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	s = "SELECT COUNT(*) count FROM " + historicTableName
 	rows, err := db.Query(s)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 	defer rows.Close()
 
@@ -571,7 +569,7 @@ func createTable(db *sql.DB, tableName string, columns []columnStruct, primaryKe
 
 	_, err := db.Exec(s)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 }
 
@@ -634,7 +632,7 @@ func tableExists(db *sql.DB, tableName string) bool {
         AND table_name=$1`
 	rows, err := db.Query(s, tableName)
 	if err != nil {
-		handleErrorAndExit(err)
+		handleErrorAndExit(err, db)
 	}
 
 	defer rows.Close()
@@ -671,16 +669,23 @@ func verboseLog(s string) {
 	}
 }
 
-func finishJob() {
+func finishJob(db *sql.DB) {
 	_, err := db.Exec(`UPDATE historic_moments SET work_log=$1 WHERE id=$2`, vb, historicMomentID)
 	if err != nil {
 		log.Fatal(err)
 	}
+	db.Close()
 }
 
-func handleErrorAndExit(err error) {
-	verboseLog("Error: " + err.Error())
-	finishJob()
-	db.Close()
-	log.Fatal(err)
+func handleErrorAndExit(err error, db *sql.DB) {
+	log.SetFlags(log.Lshortfile)
+	verboseLog("\n\n<div style='color:red'>ERROR: " + err.Error() + "</div>")
+	if db != nil {
+		_, dbErr := db.Exec(`UPDATE historic_moments SET work_log=$1, completed_at=NOW(), error_count=1 WHERE id=$2`, vb, historicMomentID)
+		if err != nil {
+			log.Fatalln(dbErr.Error())
+		}
+		db.Close()
+	}
+	panic("Historic Moment Error: " + err.Error())
 }
