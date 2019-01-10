@@ -1,0 +1,12 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      # get and install dependencies
+      - go get github.com/lib/pq && go install github.com/lib/pq
+      - go get gopkg.in/yaml.v2 && go install gopkg.in/yaml.v2
+  build:
+    commands:
+      - GOOS=linux go build -o historic_moment_linux
+artifacts:
+  files: historic_moment_linux
